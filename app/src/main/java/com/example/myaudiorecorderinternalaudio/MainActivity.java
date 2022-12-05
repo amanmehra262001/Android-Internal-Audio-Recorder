@@ -24,19 +24,26 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.Switch;
 import android.widget.Toast;
 
 public class MainActivity extends AppCompatActivity {
 
     private static final int REQUEST_AUDIO_PERMISSION_CODE = 101;
     private static final int REQUEST_INTERNET_PERMISSION_CODE = 1000;
+    public static final String MSG = "com.example.myaudiorecorderinternalaudio.MSG";
 
     public int mResultCode;
     public Intent mResultData;
+    public boolean isContinuous;
+    public boolean isInternalAudio;
 
     MediaProjectionManager mediaProjectionManager;
-    Button startBtn;
+    Switch internalAudioSwitch;
+    Button startBtnContinuous;
+    Button startBtnLoop;
     Button stopBtn;
+    Button recordChannelBtn;
     String TAG = "MainActivity";
 
 
@@ -46,16 +53,58 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        startBtn = findViewById(R.id.start_button);
+        internalAudioSwitch = findViewById(R.id.internal_audio_switch);
+        startBtnContinuous = findViewById(R.id.start_button_continuous);
+        startBtnLoop = findViewById(R.id.start_button_loop);
         stopBtn = findViewById(R.id.stop_button);
+        recordChannelBtn = findViewById(R.id.tv_record);
         mediaProjectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
 
-        startBtn.setOnClickListener(new View.OnClickListener() {
+//        startBtnFromMic.setOnClickListener(new View.OnClickListener() {
+//            @RequiresApi(api = Build.VERSION_CODES.O)
+//            @Override
+//            public void onClick(View view) {
+//                if(checkRecordingPermission()){
+//                    Log.d(TAG, "onClick: Permission Granted");
+//                    isContinuous = true;
+////                    startActivityForResult(mediaProjectionManager.createScreenCaptureIntent(),REQUEST_AUDIO_PERMISSION_CODE);
+//                    Log.d(TAG, "onClick: MIC Audio Capturing service");
+//                    Intent serviceIntent = new Intent(MainActivity.this, MicAudioCaptureService.class);
+//                    Log.d(TAG, "onClick: Service Intent created");
+//                    startService(serviceIntent);
+//                    Log.d(TAG, "onClick: MicAudioCaptureService started");
+//                }else{
+//                    requestRecordingPermission();
+//                    requestInternetPermission();;
+//                }
+//            }
+//        });
+
+        startBtnLoop.setOnClickListener(new View.OnClickListener() {
             @RequiresApi(api = Build.VERSION_CODES.Q)
             @Override
             public void onClick(View view) {
                 if(checkRecordingPermission()){
                     Log.d(TAG, "onCreate: Permissoin Granted");
+                    isContinuous = false;
+                    isInternalAudio = internalAudioSwitch.isChecked();
+                    startActivityForResult(mediaProjectionManager.createScreenCaptureIntent(),REQUEST_AUDIO_PERMISSION_CODE);
+                }else{
+                    requestRecordingPermission();
+                    requestInternetPermission();;
+                }
+            }
+        });
+
+        startBtnContinuous.setOnClickListener(new View.OnClickListener() {
+            @RequiresApi(api = Build.VERSION_CODES.Q)
+            @Override
+            public void onClick(View view) {
+                Log.d(TAG, "onClick: Clicked startBtnContinuous");
+                if(checkRecordingPermission()){
+                    Log.d(TAG, "onCreate: Permission Granted");
+                    isContinuous = true;
+                    isInternalAudio = internalAudioSwitch.isChecked();
                     startActivityForResult(mediaProjectionManager.createScreenCaptureIntent(),REQUEST_AUDIO_PERMISSION_CODE);
                 }else{
                     requestRecordingPermission();
@@ -68,11 +117,20 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 stopBtn.setText("Please Wait...");
-                Log.i(TAG, "onCreate: Stoping service");
-                Intent serviceIntent = new Intent(MainActivity.this,AudioCaptureService.class);
+                Log.i(TAG, "onCreate: Stopping service");
+                Intent serviceIntent = null;
+                serviceIntent = new Intent(MainActivity.this, AudioCaptureService.class);
                 stopService(serviceIntent);
                 Log.i(TAG, "onCreate: Service stopped");
                 stopBtn.setText("Stop");
+            }
+        });
+
+        recordChannelBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Intent activityIntent = new Intent(MainActivity.this, ChannelRecording.class);
+                startActivity(activityIntent);
             }
         });
 
@@ -94,12 +152,16 @@ public class MainActivity extends AppCompatActivity {
             Log.i(TAG, "onActivityResult: Starting screen capture");
             mResultCode = resultCode;
             mResultData = data;
-            Log.i(TAG, "onActivityResult: Resultcode and resltdata created.");
+            Log.i(TAG, "onActivityResult: Resultcode and resultdata created.");
             Log.i(TAG, "onCreate: Starting service");
+            Log.d(TAG, "onActivityResult: Audio Capturing service");
             Intent serviceIntent = new Intent(MainActivity.this,AudioCaptureService.class);
             serviceIntent.putExtra("extraData",data);
+            serviceIntent.putExtra("isContinuous", isContinuous);
+            serviceIntent.putExtra("isInternalAudio", isInternalAudio);
             startForegroundService(serviceIntent);
-            Log.i(TAG, "onCreate: Service started");
+
+            Log.i(TAG, "onActivityResult: Service Started");
         }
     }
 
@@ -140,3 +202,5 @@ public class MainActivity extends AppCompatActivity {
 }
 
 //https://medium.com/@juliozynger/media-projection-and-audio-capture-1ca72e271e9c
+
+// TODO: create toggle button to set and unset isInternalAudio value

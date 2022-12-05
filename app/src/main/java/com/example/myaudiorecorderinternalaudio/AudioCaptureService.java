@@ -16,12 +16,14 @@ import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioPlaybackCaptureConfiguration;
 import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -30,6 +32,14 @@ import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
+
+import com.microsoft.cognitiveservices.speech.CancellationDetails;
+import com.microsoft.cognitiveservices.speech.CancellationReason;
+import com.microsoft.cognitiveservices.speech.ResultReason;
+import com.microsoft.cognitiveservices.speech.SpeechConfig;
+import com.microsoft.cognitiveservices.speech.SpeechRecognitionResult;
+import com.microsoft.cognitiveservices.speech.SpeechRecognizer;
+import com.microsoft.cognitiveservices.speech.audio.AudioConfig;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -42,6 +52,8 @@ import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.MediaType;
@@ -52,6 +64,7 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 
 public class AudioCaptureService extends Service {
+
 
     class AudioCaptureServiceThread extends Thread{
         public boolean exit;
@@ -80,6 +93,7 @@ public class AudioCaptureService extends Service {
         }
         @Override
         public void run() {
+            Looper.prepare();
             super.run();
             Log.d(TAG, "run: Running Network request thread");
             try{
@@ -97,6 +111,8 @@ public class AudioCaptureService extends Service {
     private static final int RECORDER_SAMPLE_RATE = 44100;
     private static final int RECORDER_CHANNELS = AudioFormat.CHANNEL_IN_MONO;
     private static final int RECORDER_AUDIO_ENCODING = AudioFormat.ENCODING_PCM_16BIT;
+    private static final String speechKey = "10654f470a1d499e93b3dc2d897101b1";
+    private static final String speechRegion = "eastus";
 
     MediaProjectionManager mediaProjectionManager;
     MediaProjection mediaProjection;
@@ -108,6 +124,10 @@ public class AudioCaptureService extends Service {
     public Intent mResultData;
     public File outputFile;
     private File waveFile;
+    public boolean isContinuous;
+    private boolean isInternalAudio;
+    private boolean isChannelRecording;
+    private String channelId;
 
     private String TAG = "AudioCaptureService";
     private int seconds;
@@ -150,7 +170,12 @@ public class AudioCaptureService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         seconds = 0;
         isStopped = false;
+        isContinuous = intent.getBooleanExtra("isContinuous",false);
+        isInternalAudio = intent.getBooleanExtra("isInternalAudio",true);
+        isChannelRecording = intent.getBooleanExtra("isChannelRecording",false);
+        channelId = intent.getStringExtra("channelId");
         mResultData = intent.getParcelableExtra("extraData");
+        Log.d(TAG, "onStartCommand: Channel name: "+channelId+isChannelRecording);
         createAudioPlaybackCaptureConfiguration();
         return START_NOT_STICKY;
     }
@@ -164,10 +189,15 @@ public class AudioCaptureService extends Service {
             audioCaptureServiceThread.interrupt();
             audioCaptureServiceThread.join();
             rawToWave(outputFile, waveFile);
-//            Call the api
-            if(networkRequestThread != null){
-                networkRequestThread.interrupt();
-                networkRequestThread.join();
+            if(isContinuous){
+            networkRequestThread = new NetworkRequestThread();
+            networkRequestThread.start();
+            System.out.println(networkRequestThread.isAlive());
+            }else{
+                if(networkRequestThread != null){
+                    networkRequestThread.interrupt();
+                    networkRequestThread.join();
+                }
             }
         } catch (IOException e) {
             Log.e(TAG, "onDestroy: IOException");
@@ -203,18 +233,35 @@ public class AudioCaptureService extends Service {
             Toast.makeText(getApplicationContext(), "Permission not granted", Toast.LENGTH_SHORT).show();
             return;
         }
-        audioRecord = new AudioRecord.Builder()
-                .setAudioFormat(new AudioFormat.Builder()
-                        .setEncoding(RECORDER_AUDIO_ENCODING)
-                        .setSampleRate(RECORDER_SAMPLE_RATE)
-                        .setChannelMask(RECORDER_CHANNELS)
-                        .build()).setBufferSizeInBytes(BUFFER_SIZE_IN_BYTES)
-                .setAudioPlaybackCaptureConfig(audioPlaybackCaptureConfiguration)
-                .build();
+        if(!isInternalAudio){
+            audioRecord = new AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.MIC)
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setEncoding(RECORDER_AUDIO_ENCODING)
+                            .setSampleRate(RECORDER_SAMPLE_RATE)
+                            .setChannelMask(RECORDER_CHANNELS)
+                            .build())
+                    .setBufferSizeInBytes(BUFFER_SIZE_IN_BYTES)
+                    .build();
+        }else {
+            audioRecord = new AudioRecord.Builder()
+                    .setAudioFormat(new AudioFormat.Builder()
+                            .setEncoding(RECORDER_AUDIO_ENCODING)
+                            .setSampleRate(RECORDER_SAMPLE_RATE)
+                            .setChannelMask(RECORDER_CHANNELS)
+                            .build()).setBufferSizeInBytes(BUFFER_SIZE_IN_BYTES)
+                    .setAudioPlaybackCaptureConfig(audioPlaybackCaptureConfiguration)
+                    .build();
+        }
         Log.i(TAG, "recordInternalAudio: Starting audio recording");
         audioRecord.startRecording();
         Log.i(TAG, "recordInternalAudio: Audio recording started");
+        if(isContinuous) {
+            audioCaptureServiceThread = new AudioCaptureServiceThread();
+            audioCaptureServiceThread.start();
+        }else {
         start();
+        }
     }
 
     private String getOutputFilePath() {
@@ -238,7 +285,7 @@ public class AudioCaptureService extends Service {
             int i = 0;
             Log.d(TAG, "writeAudioTofile: Starting while loop");
             while (!audioCaptureServiceThread.isInterrupted()){
-                Log.d(TAG, "writeAudioTofile: "+i);
+//                Log.d(TAG, "writeAudioTofile: "+i);
                 audioRecord.read(capturedAudioSamples,0,NUM_SAMPLES_PER_READ);
 //                Log.d(TAG, "writeAudioTofile: Read from audiorecord");
                 fileOutputStream.write(capturedAudioSamples,0,NUM_SAMPLES_PER_READ);
@@ -383,9 +430,20 @@ public class AudioCaptureService extends Service {
                     Log.d(TAG, "run: Nullified audioThread");
                     rawToWave(outputFile, waveFile);
                     Log.d(TAG, "run: Converted to .wav file");
+                    Log.d(TAG, "run: Running speech recognition");
+//                    try {
+//                        startSpeechRecognition();
+//                    } catch (ExecutionException e) {
+//                        Log.e(TAG, "writeAudioTofile: ExecutionException occured",e );
+//                        e.printStackTrace();
+//                    }catch (InterruptedException e) {
+//                        Log.e(TAG, "writeAudioTofile: InterruptedException occured",e );
+//                        e.printStackTrace();
+//                    }
 //                    Call the api
                     Log.d(TAG, "run: Calling the api");
 //                    doMultiPartRequest();
+                    Log.d(TAG, "run: Starting the speech recognition");
                     networkRequestThread = new NetworkRequestThread();
                     networkRequestThread.start();
                 }catch (InterruptedException e) {
@@ -413,31 +471,113 @@ public class AudioCaptureService extends Service {
 
     private void doActualRequest(String path) {
         OkHttpClient client = new OkHttpClient().newBuilder()
+                .readTimeout(1,TimeUnit.MINUTES)
+                .connectTimeout(1,TimeUnit.MINUTES)
                 .build();
         Log.d(TAG, "doActualRequest: Got client instance");
         MediaType mediaType = MediaType.parse("text/plain");
-        RequestBody body = new MultipartBody.Builder().setType(MultipartBody.FORM)
-                .addFormDataPart("voice",path,
-                        RequestBody.create(MediaType.parse("application/octet-stream"),
-                                new File(path)))
-                .addFormDataPart("viewer","1")
-                .build();
-        Log.d(TAG, "doActualRequest: Created request body");
-        OkHttpClient.Builder builder = new OkHttpClient.Builder();
-        builder.readTimeout(5, TimeUnit.MINUTES);
-        Request request = new Request.Builder()
-                .url("http://chrome-android-prod.eba-aq5ejnit.ap-south-1.elasticbeanstalk.com/voices/api/audio-recording/")
-                .method("POST", body)
-                .addHeader("Cookie", "csrftoken=QqqQk4DnIilXyxTtD7p2Hc1JL8jG9MCUdHjOjxdIlCWdrFykztRyDPuQ9z1jFCDG")
-                .build();
+
+        RequestBody body;
+        Request request;
+        if(isChannelRecording){
+            Log.d(TAG, "doActualRequest: Recording Channel");
+            body = new MultipartBody.Builder().setType(MultipartBody.FORM)
+                    .addFormDataPart("voice",path,
+                            RequestBody.create(MediaType.parse("application/octet-stream"),
+                                    new File(path)))
+                    .addFormDataPart("channel",channelId)
+                    .build();
+            Log.d(TAG, "doActualRequest: Created request body");
+            OkHttpClient.Builder builder = new OkHttpClient.Builder();
+            builder.readTimeout(5, TimeUnit.MINUTES);
+            request = new Request.Builder()
+                    .url("http://chrome-android-prod.eba-aq5ejnit.ap-south-1.elasticbeanstalk.com/voices/api/tv-recording/")
+                    .method("POST", body)
+                    .addHeader("Cookie", "csrftoken=QqqQk4DnIilXyxTtD7p2Hc1JL8jG9MCUdHjOjxdIlCWdrFykztRyDPuQ9z1jFCDG")
+                    .build();
+        }else{
+            Log.d(TAG, "doActualRequest: Recording ad");
+            body = new MultipartBody.Builder().setType(MultipartBody.FORM)
+                    .addFormDataPart("voice",path,
+                            RequestBody.create(MediaType.parse("application/octet-stream"),
+                                    new File(path)))
+                    .addFormDataPart("viewer","1")
+                    .build();
+            Log.d(TAG, "doActualRequest: Created request body");
+            OkHttpClient.Builder builder = new OkHttpClient.Builder();
+            builder.readTimeout(5, TimeUnit.MINUTES);
+            request = new Request.Builder()
+                    .url("http://chrome-android-prod.eba-aq5ejnit.ap-south-1.elasticbeanstalk.com/voices/api/audio-recording/")
+                    .method("POST", body)
+                    .addHeader("Cookie", "csrftoken=QqqQk4DnIilXyxTtD7p2Hc1JL8jG9MCUdHjOjxdIlCWdrFykztRyDPuQ9z1jFCDG")
+                    .build();
+        }
         Log.d(TAG, "doActualRequest: Created actual request");
         try {
             Log.d(TAG, "doActualRequest: Sending response");
             Response response = client.newCall(request).execute();
             Log.d(TAG, "doActualRequest: RESPONSE:"+response.body().string());
+            Toast.makeText(getApplicationContext(), "Audio sent successfully", Toast.LENGTH_SHORT).show();
         } catch (IOException e) {
             Log.e(TAG, "doActualRequest: ERROR:"+e.toString());
+            Toast.makeText(getApplicationContext(), "Some error occurred in sending audio", Toast.LENGTH_SHORT).show();
             e.printStackTrace();
         }
     }
+
+//    --------------------SPEECH RECOGNITION-----------------------------
+
+    public void startSpeechRecognition() throws InterruptedException, ExecutionException{
+        Log.d(TAG, "startSpeechRecognition: Starting speech recognition");
+        SpeechConfig speechConfig = SpeechConfig.fromSubscription(speechKey, speechRegion);
+        speechConfig.setSpeechRecognitionLanguage("en-US");
+        Log.d(TAG, "startSpeechRecognition: Built speechconfig configuration");
+        recognizeSpeech(speechConfig);
+    }
+
+    private void recognizeSpeech(SpeechConfig speechConfig) {
+        Log.d(TAG, "recognizeSpeech: Starting recognizeSpeech");
+        String waveFilePath = getWaveFilePath();
+        AudioConfig audioConfig = AudioConfig.fromWavFileInput(waveFilePath);
+        SpeechRecognizer speechRecognizer = new SpeechRecognizer(speechConfig,audioConfig);
+        Log.d(TAG, "recognizeSpeech: Built speechrecognizer instance");
+
+        Log.d(TAG, "recognizeSpeech: Starting speech recognition");
+        Future<SpeechRecognitionResult> task = speechRecognizer.recognizeOnceAsync();
+        SpeechRecognitionResult speechRecognitionResult = null;
+        Log.d(TAG, "recognizeSpeech: Entering try/catch block");
+        try {
+            speechRecognitionResult = task.get();
+        } catch (ExecutionException e) {
+            Log.e(TAG, "recognizeSpeech: ExecutionException occured:",e );
+            e.printStackTrace();
+        } catch (InterruptedException e) {
+            Log.e(TAG, "recognizeSpeech: InterruptedException occured",e );
+            e.printStackTrace();
+        }
+        Log.d(TAG, "recognizeSpeech: Exited try/catch block");
+
+        if (speechRecognitionResult.getReason() == ResultReason.RecognizedSpeech) {
+            System.out.println("RECOGNIZED: Text=" + speechRecognitionResult.getText());
+        }
+        else if (speechRecognitionResult.getReason() == ResultReason.NoMatch) {
+            System.out.println("NOMATCH: Speech could not be recognized.");
+        }
+        else if (speechRecognitionResult.getReason() == ResultReason.Canceled) {
+            CancellationDetails cancellation = CancellationDetails.fromResult(speechRecognitionResult);
+            System.out.println("CANCELED: Reason=" + cancellation.getReason());
+
+            if (cancellation.getReason() == CancellationReason.Error) {
+                System.out.println("CANCELED: ErrorCode=" + cancellation.getErrorCode());
+                System.out.println("CANCELED: ErrorDetails=" + cancellation.getErrorDetails());
+                System.out.println("CANCELED: Did you set the speech resource key and region values?");
+            }
+        }
+
+        System.exit(0);
+    }
+
+
 }
+
+// STOP THREAD IN JAVA: https://www.java67.com/2015/07/how-to-stop-thread-in-java-example.html

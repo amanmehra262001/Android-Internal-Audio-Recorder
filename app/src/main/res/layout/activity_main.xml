@@ -8,23 +8,53 @@
 
 
     <Button
-        android:id="@+id/start_button"
+        android:id="@+id/start_button_loop"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_above="@+id/stop_button"
         android:layout_alignParentEnd="true"
-        android:layout_alignParentBottom="true"
-        android:layout_marginEnd="159dp"
-        android:layout_marginBottom="338dp"
-        android:text="Start" />
+        android:layout_marginEnd="153dp"
+        android:layout_marginBottom="44dp"
+        android:text="Start Loop" />
+
+    <Button
+        android:id="@+id/start_button_continuous"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_above="@+id/start_button_loop"
+        android:layout_alignParentEnd="true"
+        android:layout_marginEnd="125dp"
+        android:layout_marginBottom="24dp"
+        android:text="Start Continous" />
 
     <Button
         android:id="@+id/stop_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_above="@+id/tv_record"
+        android:layout_alignParentEnd="true"
+        android:layout_marginEnd="171dp"
+        android:layout_marginBottom="128dp"
+        android:text="Stop" />
+
+    <Switch
+        android:id="@+id/internal_audio_switch"
+        android:layout_width="152dp"
+        android:layout_height="43dp"
+        android:layout_above="@+id/start_button_continuous"
+        android:layout_alignParentEnd="true"
+        android:layout_marginEnd="144dp"
+        android:layout_marginBottom="26dp"
+        android:text="Internal Audio" />
+
+    <Button
+        android:id="@+id/tv_record"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
         android:layout_alignParentEnd="true"
         android:layout_alignParentBottom="true"
-        android:layout_marginEnd="155dp"
-        android:layout_marginBottom="240dp"
-        android:text="Stop" />
+        android:layout_marginEnd="117dp"
+        android:layout_marginBottom="78dp"
+        android:text="Record TV channel" />
 
 </RelativeLayout>
